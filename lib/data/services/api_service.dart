@@ -1,17 +1,9 @@
-// lib/data/services/api_service.dart
-// ────────────────────────────────────
-// Configured Dio HTTP client.
-//
-// All API calls go through this single Dio instance so the base URL,
-// timeout, and error handling are applied consistently.
-// Widgets and providers must NEVER create their own Dio instances.
-
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cleandesk_ai/core/constants/app_constants.dart';
+import 'package:cleandesk_ai/core/config/app_env.dart';
 
-/// Describes the type of API error so the UI can show the right message.
 enum ApiErrorType {
   network,          // No internet or server unreachable
   notFound,         // 404 — resource does not exist
@@ -29,7 +21,7 @@ class ApiException implements Exception {
   const ApiException({required this.type, required this.message});
 
   @override
-  String toString() => 'ApiException(type=$type, message=$message)';
+  String toString() => message;
 }
 
 /// Creates and configures the shared Dio instance.
@@ -46,36 +38,54 @@ Dio _buildDio() {
     ),
   );
 
-  // Request / response logger (helpful during development)
-  dio.interceptors.add(
-    LogInterceptor(
-      requestBody:  true,
-      responseBody: true,
-      logPrint: (obj) => debugPrint(obj.toString()),
-    ),
-  );
+  // Request / response logger — only enabled in development
+  if (AppEnv.enableApiLogs) {
+    dio.interceptors.add(
+      LogInterceptor(
+        requestBody:  true,
+        responseBody: true,
+        logPrint: (obj) => debugPrint(obj.toString()),
+      ),
+    );
+  }
 
   return dio;
 }
 
 // ignore_for_file: avoid_print
 void debugPrint(String message) {
-  // ignore in production — replace with a proper logger if needed
   // ignore: avoid_print
   print('[API] $message');
 }
+
 
 /// Riverpod provider — inject this wherever you need to make API calls.
 final dioProvider = Provider<Dio>((ref) => _buildDio());
 
 /// Converts a DioException into a user-friendly ApiException.
 ApiException handleDioError(DioException e) {
-  if (e.type == DioExceptionType.connectionError ||
-      e.type == DioExceptionType.connectionTimeout ||
-      e.type == DioExceptionType.receiveTimeout) {
+  // 1. Handle Timeouts
+  if (e.type == DioExceptionType.connectionTimeout ||
+      e.type == DioExceptionType.receiveTimeout ||
+      e.type == DioExceptionType.sendTimeout) {
     return const ApiException(
       type: ApiErrorType.network,
-      message: 'No internet connection. Please check your network and try again.',
+      message: 'Connection timed out. Please check your internet stability.',
+    );
+  }
+
+  // 2. Handle Connection Errors (No internet vs Server Down)
+  if (e.type == DioExceptionType.connectionError) {
+    final errorStr = e.error?.toString() ?? e.message ?? '';
+    if (errorStr.contains('Failed host lookup') || errorStr.contains('SocketException')) {
+      return const ApiException(
+        type: ApiErrorType.network,
+        message: 'Cannot reach the server. Please check your internet connection or verify if the backend is running.',
+      );
+    }
+    return const ApiException(
+      type: ApiErrorType.network,
+      message: 'A network connection error occurred.',
     );
   }
 
@@ -95,7 +105,7 @@ ApiException handleDioError(DioException e) {
       if (statusCode != null && statusCode >= 500) {
         return const ApiException(
           type: ApiErrorType.server,
-          message: 'Server error. Please try again later.',
+          message: 'Server error. The backend might be down. Please try again later.',
         );
       }
       return ApiException(

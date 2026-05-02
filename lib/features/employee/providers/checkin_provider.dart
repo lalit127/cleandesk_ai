@@ -1,20 +1,15 @@
 // lib/features/employee/providers/checkin_provider.dart
 // ────────────────────────────────────────────────────────
 // Manages the state for the employee check-in / check-out flow.
-//
-// Handles:
-//   - Fetching today's attendance record on load
-//   - Requesting GPS permission
-//   - Resolving current GPS coordinates
-//   - Calling the check-in / check-out API endpoints
-//   - All error states (permission denied, GPS timeout, network error, etc.)
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
+import 'package:cleandesk_ai/core/config/app_env.dart';
 import 'package:cleandesk_ai/core/constants/app_constants.dart';
 import 'package:cleandesk_ai/data/models/attendance.dart';
 import 'package:cleandesk_ai/data/repositories/attendance_repository.dart';
+import 'package:cleandesk_ai/data/services/api_service.dart';
 import 'package:cleandesk_ai/features/login/providers/session_provider.dart';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -32,6 +27,7 @@ class CheckInState {
   final bool isGpsLoading;           // GPS resolution in progress
   final bool isGpsPermissionDenied;  // User denied location permission
   final String? errorMessage;
+  final ApiErrorType? errorType;
   final String? successMessage;
 
   const CheckInState({
@@ -40,6 +36,7 @@ class CheckInState {
     this.isGpsLoading        = false,
     this.isGpsPermissionDenied = false,
     this.errorMessage,
+    this.errorType,
     this.successMessage,
   });
 
@@ -49,6 +46,7 @@ class CheckInState {
     bool? isGpsLoading,
     bool? isGpsPermissionDenied,
     String? errorMessage,
+    ApiErrorType? errorType,
     String? successMessage,
     bool clearTodayRecord = false,
     bool clearMessages    = false,
@@ -59,6 +57,7 @@ class CheckInState {
       isGpsLoading:         isGpsLoading        ?? this.isGpsLoading,
       isGpsPermissionDenied: isGpsPermissionDenied ?? this.isGpsPermissionDenied,
       errorMessage:         clearMessages ? null : (errorMessage ?? this.errorMessage),
+      errorType:            clearMessages ? null : (errorType    ?? this.errorType),
       successMessage:       clearMessages ? null : (successMessage ?? this.successMessage),
     );
   }
@@ -83,11 +82,21 @@ class CheckInNotifier extends Notifier<CheckInState> {
         status:      CheckInStatus.idle,
         todayRecord: record,
       );
+    } on ApiException catch (e) {
+      if (e.type == ApiErrorType.notFound) {
+        state = state.copyWith(status: CheckInStatus.idle, clearTodayRecord: true);
+      } else {
+        state = state.copyWith(
+          status:       CheckInStatus.error,
+          errorMessage: e.message,
+          errorType:    e.type,
+        );
+      }
     } catch (e) {
-      // A missing record is represented as null, not an error
       state = state.copyWith(
-        status:          CheckInStatus.idle,
-        clearTodayRecord: true,
+        status:       CheckInStatus.error,
+        errorMessage: 'An unexpected error occurred.',
+        errorType:    ApiErrorType.unknown,
       );
     }
   }
@@ -96,7 +105,7 @@ class CheckInNotifier extends Notifier<CheckInState> {
 
   Future<void> checkIn() async {
     final position = await _resolvePosition();
-    if (position == null) return; // resolvePosition already updated state
+    if (position == null) return;
 
     state = state.copyWith(status: CheckInStatus.loading, clearMessages: true);
     try {
@@ -110,10 +119,17 @@ class CheckInNotifier extends Notifier<CheckInState> {
         todayRecord:    record,
         successMessage: 'Checked in successfully!',
       );
+    } on ApiException catch (e) {
+      state = state.copyWith(
+        status:       CheckInStatus.error,
+        errorMessage: e.message,
+        errorType:    e.type,
+      );
     } catch (e) {
       state = state.copyWith(
         status:       CheckInStatus.error,
-        errorMessage: e.toString(),
+        errorMessage: 'An unexpected error occurred.',
+        errorType:    ApiErrorType.unknown,
       );
     }
   }
@@ -136,10 +152,17 @@ class CheckInNotifier extends Notifier<CheckInState> {
         todayRecord:    record,
         successMessage: 'Checked out successfully!',
       );
+    } on ApiException catch (e) {
+      state = state.copyWith(
+        status:       CheckInStatus.error,
+        errorMessage: e.message,
+        errorType:    e.type,
+      );
     } catch (e) {
       state = state.copyWith(
         status:       CheckInStatus.error,
-        errorMessage: e.toString(),
+        errorMessage: 'An unexpected error occurred.',
+        errorType:    ApiErrorType.unknown,
       );
     }
   }
@@ -147,7 +170,25 @@ class CheckInNotifier extends Notifier<CheckInState> {
   // ── GPS resolution ───────────────────────────────────────────────────────
 
   Future<Position?> _resolvePosition() async {
-    // Check / request location permission
+    // In development with mock GPS enabled, skip real GPS entirely.
+    // Flip AppEnv._useMockGps = true in app_env.dart to activate.
+    if (AppEnv.useMockGps) {
+      return Future.value(
+        Position(
+          latitude:             AppEnv.mockLat,
+          longitude:            AppEnv.mockLng,
+          timestamp:            DateTime.now(),
+          accuracy:             1.0,
+          altitude:             0.0,
+          altitudeAccuracy:     0.0,
+          heading:              0.0,
+          headingAccuracy:      0.0,
+          speed:                0.0,
+          speedAccuracy:        0.0,
+        ),
+      );
+    }
+
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
@@ -162,8 +203,7 @@ class CheckInNotifier extends Notifier<CheckInState> {
       return null;
     }
 
-    // Permission granted — resolve position with timeout
-    state = state.copyWith(isGpsLoading: true, clearMessages: true);
+    state = state.copyWith(isGpsLoading: true, clearMessages: true, isGpsPermissionDenied: false);
     try {
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high
@@ -192,8 +232,20 @@ class CheckInNotifier extends Notifier<CheckInState> {
     }
   }
 
+
+  Future<void> refreshPermissionStatus() async {
+    final permission = await Geolocator.checkPermission();
+    final isDenied = permission == LocationPermission.denied || 
+                     permission == LocationPermission.deniedForever;
+    
+    state = state.copyWith(
+      isGpsPermissionDenied: isDenied,
+      clearMessages: !isDenied && state.errorMessage == 'Location permission is required to check in.',
+    );
+  }
+
   void openLocationSettings() {
-    Geolocator.openLocationSettings();
+    Geolocator.openAppSettings();
   }
 
   void clearMessages() {

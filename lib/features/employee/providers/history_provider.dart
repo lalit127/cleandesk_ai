@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cleandesk_ai/core/constants/app_constants.dart';
 import 'package:cleandesk_ai/data/models/attendance.dart';
 import 'package:cleandesk_ai/data/repositories/attendance_repository.dart';
+import 'package:cleandesk_ai/data/services/api_service.dart';
 import 'package:cleandesk_ai/features/login/providers/session_provider.dart';
 
 class HistoryState {
@@ -16,6 +17,7 @@ class HistoryState {
   final bool hasMore;
   final int currentPage;
   final String? errorMessage;
+  final ApiErrorType? errorType;
 
   const HistoryState({
     this.records      = const [],
@@ -24,6 +26,7 @@ class HistoryState {
     this.hasMore      = true,
     this.currentPage  = 0,
     this.errorMessage,
+    this.errorType,
   });
 
   HistoryState copyWith({
@@ -33,6 +36,7 @@ class HistoryState {
     bool? hasMore,
     int? currentPage,
     String? errorMessage,
+    ApiErrorType? errorType,
     bool clearError = false,
   }) {
     return HistoryState(
@@ -42,6 +46,7 @@ class HistoryState {
       hasMore:       hasMore        ?? this.hasMore,
       currentPage:   currentPage    ?? this.currentPage,
       errorMessage:  clearError ? null : (errorMessage ?? this.errorMessage),
+      errorType:     clearError ? null : (errorType    ?? this.errorType),
     );
   }
 }
@@ -64,10 +69,17 @@ class HistoryNotifier extends Notifier<HistoryState> {
         hasMore:     result.hasMore,
         currentPage: 1,
       );
+    } on ApiException catch (e) {
+      state = state.copyWith(
+        isLoading:    false,
+        errorMessage: e.message,
+        errorType:    e.type,
+      );
     } catch (e) {
       state = state.copyWith(
         isLoading:    false,
-        errorMessage: e.toString(),
+        errorMessage: 'An unexpected error occurred.',
+        errorType:    ApiErrorType.unknown,
       );
     }
   }
@@ -90,10 +102,17 @@ class HistoryNotifier extends Notifier<HistoryState> {
         hasMore:       result.hasMore,
         currentPage:   nextPage,
       );
+    } on ApiException catch (e) {
+      state = state.copyWith(
+        isLoadingMore: false,
+        errorMessage:  e.message,
+        errorType:     e.type,
+      );
     } catch (e) {
       state = state.copyWith(
         isLoadingMore: false,
-        errorMessage:  e.toString(),
+        errorMessage:  'An unexpected error occurred.',
+        errorType:     ApiErrorType.unknown,
       );
     }
   }

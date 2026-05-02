@@ -9,8 +9,10 @@ import 'package:intl/intl.dart';
 
 import 'package:cleandesk_ai/core/theme/app_theme.dart';
 import 'package:cleandesk_ai/data/models/attendance.dart';
+import 'package:cleandesk_ai/data/services/api_service.dart';
 import 'package:cleandesk_ai/features/employee/providers/history_provider.dart';
 import 'package:cleandesk_ai/widgets/status_chip.dart';
+import 'package:cleandesk_ai/widgets/error_state_widget.dart';
 
 class AttendanceHistoryScreen extends ConsumerStatefulWidget {
   const AttendanceHistoryScreen({super.key});
@@ -63,8 +65,9 @@ class _AttendanceHistoryScreenState
     }
 
     if (state.errorMessage != null && state.records.isEmpty) {
-      return _ErrorState(
+      return ErrorStateWidget(
         message: state.errorMessage!,
+        errorType: state.errorType,
         onRetry: () => ref.read(historyProvider.notifier).loadInitial(),
       );
     }
@@ -232,46 +235,6 @@ class _EmptyState extends StatelessWidget {
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: AppTheme.grey600, height: 1.5),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── Error state ───────────────────────────────────────────────────────────────
-
-class _ErrorState extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-  const _ErrorState({required this.message, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 48, color: AppTheme.grey400),
-            const SizedBox(height: 16),
-            const Text(
-              'Something went wrong',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppTheme.black,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13, color: AppTheme.grey600),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(onPressed: onRetry, child: const Text('Retry')),
           ],
         ),
       ),

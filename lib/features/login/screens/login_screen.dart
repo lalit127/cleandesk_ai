@@ -9,12 +9,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cleandesk_ai/core/theme/app_theme.dart';
 import 'package:cleandesk_ai/data/models/user.dart';
 import 'package:cleandesk_ai/data/repositories/user_repository.dart';
+import 'package:cleandesk_ai/data/services/api_service.dart';
 import 'package:cleandesk_ai/features/login/providers/session_provider.dart';
 import 'package:cleandesk_ai/features/employee/providers/checkin_provider.dart';
 import 'package:cleandesk_ai/features/employee/providers/history_provider.dart';
 import 'package:cleandesk_ai/features/manager/providers/team_provider.dart';
 import 'package:cleandesk_ai/features/employee/screens/employee_home_screen.dart';
 import 'package:cleandesk_ai/features/manager/screens/team_dashboard_screen.dart';
+import 'package:cleandesk_ai/widgets/error_state_widget.dart';
 
 // ── Provider: fetch users list ────────────────────────────────────────────────
 
@@ -78,10 +80,22 @@ class LoginScreen extends ConsumerWidget {
                   loading: () => const Center(
                     child: CircularProgressIndicator(color: AppTheme.black),
                   ),
-                  error: (err, _) => _ErrorState(
-                    message: err.toString(),
-                    onRetry: () => ref.invalidate(usersListProvider),
-                  ),
+                  error: (err, _) {
+                    ApiErrorType? errorType;
+                    String message = err.toString();
+                    
+                    if (err is ApiException) {
+                      errorType = err.type;
+                      message = err.message;
+                    }
+
+                    return ErrorStateWidget(
+                      message: message,
+                      errorType: errorType,
+                      isFullScreen: false,
+                      onRetry: () => ref.invalidate(usersListProvider),
+                    );
+                  },
                   data: (users) => ListView.separated(
                     itemCount: users.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 12),
@@ -210,46 +224,6 @@ class _UserTile extends ConsumerWidget {
         builder: (_) => user.isManager
             ? const TeamDashboardScreen()
             : const EmployeeHomeScreen(),
-      ),
-    );
-  }
-}
-
-// ── Error state ───────────────────────────────────────────────────────────────
-
-class _ErrorState extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-  const _ErrorState({required this.message, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.wifi_off_outlined, size: 56, color: AppTheme.grey400),
-            const SizedBox(height: 16),
-            const Text(
-              'Could not load users',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppTheme.black,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13, color: AppTheme.grey600),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
       ),
     );
   }

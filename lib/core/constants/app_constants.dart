@@ -1,16 +1,21 @@
 // lib/core/constants/app_constants.dart
 // ─────────────────────────────────────
-// All hard-coded values live here so they can be changed in one place.
-// Change BASE_URL to point to your backend before running the app.
+// All app-wide constants.
+//
+// Environment-specific values (URLs, geofence settings) are read from
+// AppEnv — see lib/core/config/app_env.dart.
+// Switch the environment in main.dart via AppEnv.init(Flavor.xxx).
+
+import 'package:cleandesk_ai/core/config/app_env.dart';
 
 class AppConstants {
   AppConstants._(); // prevent instantiation
 
   // -------------------------------------------------------------------------
-  // Backend base URL
+  // Backend base URL — resolved from the current environment
   // -------------------------------------------------------------------------
 
-  static const String baseUrl = 'https://trouble-subtitle-pager.ngrok-free.dev';
+  static String get baseUrl => AppEnv.baseUrl;
 
   // -------------------------------------------------------------------------
   // SharedPreferences keys

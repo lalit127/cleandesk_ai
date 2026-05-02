@@ -8,6 +8,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'core/config/app_env.dart';
 import 'core/theme/app_theme.dart';
 import 'features/employee/screens/employee_home_screen.dart';
 import 'features/login/providers/session_provider.dart';
@@ -15,6 +16,12 @@ import 'features/login/screens/login_screen.dart';
 import 'features/manager/screens/team_dashboard_screen.dart';
 
 void main() {
+  // ── Set environment BEFORE runApp ──────────────────────────────────────────
+  // Change to Flavor.production before deploying to real users.
+  // Development : geofence skipped, API logs on, ngrok base URL
+  // Production  : geofence enforced by backend, logs off, real backend URL
+  AppEnv.init(Flavor.development);
+
   runApp(
     // ProviderScope is required — it holds all Riverpod provider state
     const ProviderScope(

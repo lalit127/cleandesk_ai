@@ -13,6 +13,7 @@ import 'package:cleandesk_ai/features/employee/screens/attendance_history_screen
 import 'package:cleandesk_ai/features/login/providers/session_provider.dart';
 import 'package:cleandesk_ai/features/login/screens/login_screen.dart';
 import 'package:cleandesk_ai/widgets/status_chip.dart';
+import 'package:cleandesk_ai/widgets/error_state_widget.dart';
 
 class EmployeeHomeScreen extends ConsumerStatefulWidget {
   const EmployeeHomeScreen({super.key});
@@ -21,11 +22,26 @@ class EmployeeHomeScreen extends ConsumerStatefulWidget {
   ConsumerState<EmployeeHomeScreen> createState() => _EmployeeHomeScreenState();
 }
 
-class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
+class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     Future.microtask(() => ref.read(checkInProvider.notifier).loadToday());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Re-check permission status when user returns from settings
+      ref.read(checkInProvider.notifier).refreshPermissionStatus();
+    }
   }
 
   @override
@@ -39,18 +55,16 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
         _showSnack(next.successMessage!, isError: false);
         ref.read(checkInProvider.notifier).clearMessages();
       }
+      // We only show snackbar for errors if we already have data on screen.
+      // If records are null, we'll show the full-screen error widget instead.
       if (next.errorMessage != null &&
           next.errorMessage != prev?.errorMessage &&
-          next.status == CheckInStatus.error) {
+          next.status == CheckInStatus.error &&
+          next.todayRecord != null) {
         _showSnack(next.errorMessage!, isError: true);
         ref.read(checkInProvider.notifier).clearMessages();
       }
     });
-
-    final isLoading   = checkIn.status == CheckInStatus.loading || checkIn.isGpsLoading;
-    final todayRecord = checkIn.todayRecord;
-    final hasCheckedIn  = todayRecord != null;
-    final hasCheckedOut = todayRecord?.isCheckedOut ?? false;
 
     return Scaffold(
       appBar: AppBar(
@@ -71,89 +85,113 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
           ),
         ],
       ),
+      body: _buildBody(checkIn),
+    );
+  }
 
-      body: RefreshIndicator(
-        color: AppTheme.black,
-        onRefresh: () => ref.read(checkInProvider.notifier).loadToday(),
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                DateFormat('EEEE, d MMMM yyyy').format(DateTime.now()),
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: AppTheme.grey600,
-                  fontWeight: FontWeight.w500,
-                ),
+  Widget _buildBody(CheckInState checkIn) {
+    // 1. Initial Loading
+    if (checkIn.status == CheckInStatus.loading && checkIn.todayRecord == null) {
+      return const Center(
+        child: CircularProgressIndicator(color: AppTheme.black),
+      );
+    }
+
+    // 2. Full-screen Error (No internet / Server down on initial load)
+    if (checkIn.status == CheckInStatus.error && checkIn.todayRecord == null) {
+      return ErrorStateWidget(
+        message: checkIn.errorMessage ?? 'Something went wrong',
+        errorType: checkIn.errorType,
+        onRetry: () => ref.read(checkInProvider.notifier).loadToday(),
+      );
+    }
+
+    final isLoading   = checkIn.status == CheckInStatus.loading || checkIn.isGpsLoading;
+    final todayRecord = checkIn.todayRecord;
+    final hasCheckedIn  = todayRecord != null;
+    final hasCheckedOut = todayRecord?.isCheckedOut ?? false;
+
+    return RefreshIndicator(
+      color: AppTheme.black,
+      onRefresh: () => ref.read(checkInProvider.notifier).loadToday(),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              DateFormat('EEEE, d MMMM yyyy').format(DateTime.now()),
+              style: const TextStyle(
+                fontSize: 14,
+                color: AppTheme.grey600,
+                fontWeight: FontWeight.w500,
               ),
-              const SizedBox(height: 24),
+            ),
+            const SizedBox(height: 24),
 
-              _StatusCard(
-                record:       todayRecord,
-                isLoading:    checkIn.status == CheckInStatus.loading,
+            _StatusCard(
+              record:       todayRecord,
+              isLoading:    checkIn.status == CheckInStatus.loading && todayRecord != null,
+            ),
+            const SizedBox(height: 32),
+
+            if (checkIn.isGpsPermissionDenied) ...[
+              _GpsPermissionBanner(
+                onOpenSettings: () =>
+                    ref.read(checkInProvider.notifier).openLocationSettings(),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 20),
+            ],
 
-              if (checkIn.isGpsPermissionDenied) ...[
-                _GpsPermissionBanner(
-                  onOpenSettings: () =>
-                      ref.read(checkInProvider.notifier).openLocationSettings(),
+            if (checkIn.isGpsLoading) ...[
+              const _GpsLoadingBanner(),
+              const SizedBox(height: 20),
+            ],
+
+            if (!hasCheckedIn)
+              _ActionButton(
+                label:    'Check In',
+                icon:     Icons.login_outlined,
+                disabled: isLoading || checkIn.isGpsPermissionDenied,
+                onTap:    () => ref.read(checkInProvider.notifier).checkIn(),
+              ),
+
+            if (hasCheckedIn && !hasCheckedOut)
+              _ActionButton(
+                label:    'Check Out',
+                icon:     Icons.logout_outlined,
+                disabled: isLoading || checkIn.isGpsPermissionDenied,
+                onTap:    () => ref.read(checkInProvider.notifier).checkOut(),
+                outlined: true,
+              ),
+
+            if (hasCheckedOut)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppTheme.grey100,
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                const SizedBox(height: 20),
-              ],
-
-              if (checkIn.isGpsLoading) ...[
-                const _GpsLoadingBanner(),
-                const SizedBox(height: 20),
-              ],
-
-              if (!hasCheckedIn)
-                _ActionButton(
-                  label:    'Check In',
-                  icon:     Icons.login_outlined,
-                  disabled: isLoading || checkIn.isGpsPermissionDenied,
-                  onTap:    () => ref.read(checkInProvider.notifier).checkIn(),
-                ),
-
-              if (hasCheckedIn && !hasCheckedOut)
-                _ActionButton(
-                  label:    'Check Out',
-                  icon:     Icons.logout_outlined,
-                  disabled: isLoading || checkIn.isGpsPermissionDenied,
-                  onTap:    () => ref.read(checkInProvider.notifier).checkOut(),
-                  outlined: true,
-                ),
-
-              if (hasCheckedOut)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: AppTheme.grey100,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(Icons.check_circle_outline, color: AppTheme.successGreen, size: 20),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Your day is complete. See you tomorrow!',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: AppTheme.grey800,
-                            fontWeight: FontWeight.w500,
-                          ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.check_circle_outline, color: AppTheme.successGreen, size: 20),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Your day is complete. See you tomorrow!',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppTheme.grey800,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );
