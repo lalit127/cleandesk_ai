@@ -2,6 +2,7 @@
 // ────────────────────────────────────
 // Configured Dio HTTP client.
 
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -101,7 +102,7 @@ ApiException handleDioError(DioException e) {
 
   switch (statusCode) {
     case 404:
-      // Check for ngrok offline error specifically (ERR_NGROK_3200)
+      // 1. Check for ngrok offline error specifically (ERR_NGROK_3200)
       final ngrokHeader = e.response?.headers.value('ngrok-error-code');
       if (ngrokHeader == 'ERR_NGROK_3200') {
         return const ApiException(
@@ -110,10 +111,20 @@ ApiException handleDioError(DioException e) {
         );
       }
 
+      // 2. If the API returned a 'detail' message, it's a legitimate "not found" business error
+      if (detail != null) {
+        return ApiException(
+          type: ApiErrorType.notFound,
+          message: detail,
+        );
+      }
+
+      // 3. Otherwise, it's a generic 404 which usually means the endpoint itself doesn't exist
       return const ApiException(
         type: ApiErrorType.server, 
         message: 'Server endpoint not found. The backend might not be running correctly.',
       );
+
     case 409:
       return ApiException(type: ApiErrorType.conflict, message: detail ?? 'Conflict.');
     case 422:
@@ -135,11 +146,28 @@ ApiException handleDioError(DioException e) {
 }
 
 String? _extractDetail(dynamic data) {
-  if (data is Map<String, dynamic>) {
-    final detail = data['detail'];
+  if (data == null) return null;
+
+  Map? mapData;
+  if (data is Map) {
+    mapData = data;
+  } else if (data is String) {
+    try {
+      mapData = jsonDecode(data) as Map;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  if (mapData != null) {
+    final detail = mapData['detail'];
     if (detail is String) return detail;
     if (detail is List && detail.isNotEmpty) {
-      return detail.map((e) => e['msg']?.toString() ?? '').join(', ');
+      // FastAPI validation error format
+      return detail.map((e) {
+        if (e is Map) return e['msg']?.toString() ?? '';
+        return e.toString();
+      }).join(', ');
     }
   }
   return null;
