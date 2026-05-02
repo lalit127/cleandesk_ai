@@ -3,6 +3,7 @@
 // Manager view: today's attendance for all employees.
 // Pull-to-refresh supported.
 
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -141,11 +142,11 @@ class _SummaryRow extends StatelessWidget {
 
     return Row(
       children: [
-        _SummaryChip(label: 'Total',       value: '$total',      color: AppTheme.grey100),
+        Expanded(child: _SummaryChip(label: 'Total',       value: '$total',      color: AppTheme.grey100)),
         const SizedBox(width: 8),
-        _SummaryChip(label: 'Present',     value: '$present',    color: AppTheme.chipPresent),
+        Expanded(child: _SummaryChip(label: 'Present',     value: '$present',    color: AppTheme.chipPresent)),
         const SizedBox(width: 8),
-        _SummaryChip(label: 'Checked Out', value: '$checkedOut', color: AppTheme.chipCheckedOut),
+        Expanded(child: _SummaryChip(label: 'Checked Out', value: '$checkedOut', color: AppTheme.chipCheckedOut)),
       ],
     );
   }
@@ -199,12 +200,25 @@ class _EmployeeTile extends StatelessWidget {
   final TeamAttendanceModel record;
   const _EmployeeTile({required this.record});
 
+  String _format(String? t) {
+    if (t == null) return '--:--';
+    try {
+      final normalized = t.contains('Z') || t.contains('+') ? t : '${t}Z';
+      return DateFormat('hh:mm a').format(DateTime.parse(normalized).toLocal());
+    } catch (_) {
+      return '--:--';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    String checkinDisplay = 'Not checked in';
+    String timeDisplay = 'Not checked in';
     if (record.checkinTime != null) {
-      checkinDisplay = DateFormat('hh:mm a')
-          .format(DateTime.parse(record.checkinTime!).toLocal());
+      if (record.isCheckedOut && record.checkoutTime != null) {
+        timeDisplay = 'In: ${_format(record.checkinTime)} • Out: ${_format(record.checkoutTime)}';
+      } else {
+        timeDisplay = 'Checked in at ${_format(record.checkinTime)}';
+      }
     }
 
     return ListTile(
@@ -229,10 +243,14 @@ class _EmployeeTile extends StatelessWidget {
         ),
       ),
       subtitle: Text(
-        checkinDisplay,
-        style: const TextStyle(fontSize: 13, color: AppTheme.grey600),
+        timeDisplay,
+        style: const TextStyle(
+          fontSize: 12, 
+          color: AppTheme.grey600,
+          fontFeatures: [ui.FontFeature.tabularFigures()],
+        ),
       ),
-      trailing: StatusChip(status: record.status),
+      trailing: StatusChip(status: record.status, small: true),
       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
     );
   }
