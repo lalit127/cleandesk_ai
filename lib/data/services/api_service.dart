@@ -1,3 +1,7 @@
+// lib/data/services/api_service.dart
+// ────────────────────────────────────
+// Configured Dio HTTP client.
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,12 +9,12 @@ import 'package:cleandesk_ai/core/constants/app_constants.dart';
 import 'package:cleandesk_ai/core/config/app_env.dart';
 
 enum ApiErrorType {
-  network,          // No internet or server unreachable
-  notFound,         // 404 — resource does not exist
+  network,          // No internet
+  notFound,         // 404 — resource does not exist (legit 404)
   conflict,         // 409 — business rule conflict (e.g. already checked in)
   unprocessable,    // 422 — validation error (e.g. outside geofence)
   forbidden,        // 403 — not allowed
-  server,           // 5xx — backend error
+  server,           // 5xx — backend error or connection refused
   unknown,          // Anything else
 }
 
@@ -38,7 +42,6 @@ Dio _buildDio() {
     ),
   );
 
-  // Request / response logger — only enabled in development
   if (AppEnv.enableApiLogs) {
     dio.interceptors.add(
       LogInterceptor(
@@ -54,17 +57,13 @@ Dio _buildDio() {
 
 // ignore_for_file: avoid_print
 void debugPrint(String message) {
-  // ignore: avoid_print
   print('[API] $message');
 }
 
-
-/// Riverpod provider — inject this wherever you need to make API calls.
 final dioProvider = Provider<Dio>((ref) => _buildDio());
 
 /// Converts a DioException into a user-friendly ApiException.
 ApiException handleDioError(DioException e) {
-  // 1. Handle Timeouts
   if (e.type == DioExceptionType.connectionTimeout ||
       e.type == DioExceptionType.receiveTimeout ||
       e.type == DioExceptionType.sendTimeout) {
@@ -74,15 +73,23 @@ ApiException handleDioError(DioException e) {
     );
   }
 
-  // 2. Handle Connection Errors (No internet vs Server Down)
   if (e.type == DioExceptionType.connectionError) {
     final errorStr = e.error?.toString() ?? e.message ?? '';
+    
+    if (errorStr.contains('Connection refused') || errorStr.contains('Connection closed')) {
+      return const ApiException(
+        type: ApiErrorType.server,
+        message: 'The server is not running. Please verify your backend is active.',
+      );
+    }
+
     if (errorStr.contains('Failed host lookup') || errorStr.contains('SocketException')) {
       return const ApiException(
         type: ApiErrorType.network,
-        message: 'Cannot reach the server. Please check your internet connection or verify if the backend is running.',
+        message: 'Cannot reach the server. Please check your internet connection.',
       );
     }
+    
     return const ApiException(
       type: ApiErrorType.network,
       message: 'A network connection error occurred.',
@@ -94,7 +101,19 @@ ApiException handleDioError(DioException e) {
 
   switch (statusCode) {
     case 404:
-      return ApiException(type: ApiErrorType.notFound, message: detail ?? 'Not found.');
+      // Check for ngrok offline error specifically (ERR_NGROK_3200)
+      final ngrokHeader = e.response?.headers.value('ngrok-error-code');
+      if (ngrokHeader == 'ERR_NGROK_3200') {
+        return const ApiException(
+          type: ApiErrorType.server,
+          message: 'The backend server is offline. Please start your backend application.',
+        );
+      }
+
+      return const ApiException(
+        type: ApiErrorType.server, 
+        message: 'Server endpoint not found. The backend might not be running correctly.',
+      );
     case 409:
       return ApiException(type: ApiErrorType.conflict, message: detail ?? 'Conflict.');
     case 422:
@@ -115,13 +134,11 @@ ApiException handleDioError(DioException e) {
   }
 }
 
-/// Extracts the `detail` field from a FastAPI error response body.
 String? _extractDetail(dynamic data) {
   if (data is Map<String, dynamic>) {
     final detail = data['detail'];
     if (detail is String) return detail;
     if (detail is List && detail.isNotEmpty) {
-      // Pydantic validation errors return a list
       return detail.map((e) => e['msg']?.toString() ?? '').join(', ');
     }
   }
